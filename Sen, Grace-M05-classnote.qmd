@@ -1,0 +1,365 @@
+---
+title: "M05: Reflection on Odds, Log(Odds), Odds Ratio, and Log(OR)"
+author: "Grace Sen"
+date: today
+format:
+
+  html:
+    toc: true
+    toc-depth: 4
+    toc-expand: 1
+    toc-location: right-body
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: show
+    code-tools: true
+    theme: cosmo
+    highlight-style: github
+    df-print: paged
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+  freeze: true
+---
+
+# Redo the assignment for the questions reviewed in the class
+
+> Take note of the answers, rationale, and code that you should know. Note that the concepts explained can be asked in the exam.
+
+# Video Quizzes
+
+> We reviewed video quizzes from Q1-10 in class. Below are the answers and notes of each question.
+
+```{r}
+
+library(tidyverse)
+
+# Recreate the direct-mail dataset used throughout the course
+set.seed(123)
+n <- 3000
+
+mail_data <- tibble(
+  customer_id = paste0("C", str_pad(1:n, 5, pad = "0")),
+  age = round(rnorm(n, mean = 45, sd = 12)),
+  income = round(rlnorm(n, meanlog = 10.8, sdlog = 0.6)),
+  recency_days = round(rexp(n, rate = 1 / 60)),
+  freq_12mo = rpois(n, lambda = 3),
+  avg_order_amt = round(rlnorm(n, meanlog = 4.2, sdlog = 0.5), 2),
+  channel = sample(
+    c("email", "direct_mail", "digital"),
+    n,
+    replace = TRUE,
+    prob = c(0.5, 0.3, 0.2)
+  ),
+  region = sample(
+    c("West", "South", "Midwest", "Northeast"),
+    n,
+    replace = TRUE
+  ),
+  loyalty_tier = sample(
+    c("Bronze", "Silver", "Gold", "Platinum"),
+    n,
+    replace = TRUE,
+    prob = c(0.4, 0.3, 0.2, 0.1)
+  ),
+  responded = rbinom(
+    n,
+    1,
+    prob = plogis(
+      -3 +
+        0.02 * (age - 45) +
+        0.3 * log(income / 50000) +
+        0.1 * freq_12mo -
+        0.005 * recency_days
+    )
+  )
+) |>
+  mutate(
+    income = if_else(runif(n) < 0.08, NA_real_, income),
+    avg_order_amt = if_else(runif(n) < 0.05, NA_real_, avg_order_amt),
+    responded = factor(responded, levels = c(1, 0), labels = c("yes", "no"))
+  )
+```
+
+## Q1. What Does a Log Do?
+
+1.  If $2^5=32$ then $log_2(32)=5$ because the logarithm tells us the exponent we need to raise 2 to into to get 32.
+
+2.  *Verify in R*
+
+    ```{r}
+    log(32, base = 2)
+    ```
+
+*Why is this property useful when income values range from \$7,000 to \$455,000 in your dataset?*
+
+My answer: Taking the log reduces the range of very large values. This makes the data less skewed and easier for statistical models to analyze.
+
+**Correct answer from class:** Income ranges from \~\$7K to \~\$455K - a ratio of about 65×. On the raw scale that spread makes linear modeling difficult. Log compresses it to a much narrower range (\~3.8 to \~5.7 in log10), making the relationship between income and response more linear.
+
+**Test code:**
+
+```{r}
+log10(7000)
+log10(1000)
+log10(455000)
+log10(7)
+log(7000, base = 2)
+```
+
+::: callout-note
+**Note:** This code is to check that the log transformation compresses large income values into a smaller range.
+:::
+
+## Q2. Multiplication Becomes Addition
+
+1.  *Verify using `a = 4`, `b = 8` (base 2) — compute both sides and confirm they are equal*
+
+    ```{r}
+    log(4 * 8, base = 2)
+
+    log(4, base = 2) +
+    log(8, base = 2)
+    ```
+
+    Both sides are equal 5.
+
+2.  *In logistic regression, we multiply many small probabilities together. Explain in one sentence why the log property above makes this computationally safer?*
+
+    My answer: Taking logs changes multiplication into addition, making calculations simpler and more stable when working with very small probabilities.
+
+    **Correct answer from class**: When multiplying many small probabilities (e.g., likelihoods), the product can underflow to zero in floating-point arithmetic. Log converts multiplication to addition, keeping the numbers in a stable numeric range - this is why the **log-likelihood** is maximized instead of the **likelihood** directly.
+
+    ::: callout-note
+    **Note:** Taking the log changes multiplication into addition when working with probabilities.
+    :::
+
+## Q3. Geometric Mean in Marketing
+
+1.  *Compute the arithmetic mean with `mean()`*
+
+    ```{r}
+    orders <- c(10,20,80,40,1000)
+
+    mean(orders)
+    ```
+
+2.  *Compute the geometric mean: `exp(mean(log(x)))`*
+
+    ```{r}
+    exp(mean(log(orders)))
+    ```
+
+3.  *Which better represents the “typical” customer — and why does the \$1,000 order distort the arithmetic mean more?*
+
+    My answer: The geometric mean better represents a typical customer because it is less affected by the \$1,000 order. The arithmetic mean is pulled upward by the extreme value.
+
+    **Correct answer from class**: \$56 is a much more representative "typical" order value than \$230, which is inflated by the single \$1,000 order. The arithmetic mean is heavily influenced by the outlier, while the geometric mean works in log-space, where the outlier has much less impact.
+
+    ::: callout-note
+    A single large outlier can greatly increase the arithmetic mean, while the geometric mean is less affected.
+    :::
+
+## Q4. Log(0) and the Offset
+
+1.  *Run `log(0)` — what does R return?*
+
+    ```{r}
+    log(0)
+    ```
+
+2.  *Your Week 2 recipe uses `step_log(..., offset = 1)`. Explain in one sentence why this offset is necessary.*
+
+    My answer: The offset of 1 prevents taking the log of zero, which is undefined. It allows all values to be safely transformed.
+
+    **Correct answer:** The offset ensures that even a customer with zero recency days or zero order amount doesn't produce `-Inf` after log transformation, which would crash the model.
+
+3.  *What is `log(0 + 1)`? Why is adding 1 a safe lower bound?*
+
+    ```{r}
+    log(0 + 1)
+    ```
+
+    My answer: Adding 1 makes the smallest possible value equal to 1, whose logarithm is 0.
+
+    **Correct answer from class:** `log(1) = 0` because any base raised to the power of 0 equals 1. Adding 1 as a lower bound means the minimum possible log-transformed value is 0, not negative infinity, providing a safe starting point for the model.
+
+    ::: callout-note
+    Using \`offset = 1\` avoids \`-Inf\` values when a variable contains zeros.
+    :::
+
+## Q5. Base Conversion
+
+1.  *For income = \$49,021, compute `log2()`, `log10()`, and `log()` (natural)*
+
+    ```{r}
+    income_val <- 49021
+
+    log(income_val, base = 2)
+    log10(income_val)
+    log(income_val)
+    ```
+
+2.  *Divide `log()` by `log10()` — what constant do you get?*
+
+    ```{r}
+    log(income_val) / log10(income_val)
+    ```
+
+3.  *After `step_normalize()` is applied in the recipe, does it matter which base was used for `step_log()`? Explain why or why not.*
+
+    No. After `step_normalize()`, the variables are standardized, so the choice of log base has very little effect on the final model.
+
+    **Correct answer from class:** The ratio is the constant `log(10)` ≈ 2.303 - any value in natural log equals its log10 value × 2.303. Since `step_normalize()` subtracts the mean and divides by the standard deviation, multiplying by a constant changes both the mean and SD proportionally, and the resulting z-scores are identical regardless of the logarithm base.
+
+    ::: {.callout-note title="Note"}
+    Normalization removes the effect of using different log bases by putting all variables on the same standardized scale.
+    :::
+
+## Q6. Probability vs. Odds
+
+1.  *Compute the probability of responding*
+
+    ```{r}
+    yes <- 142
+    no <- 3000 - 142
+
+    p <- yes / (yes + no)
+    p
+    ```
+
+2.  *Compute the odds of responding*
+
+    ```{r}
+    odds <- yes / no
+    odds
+    ```
+
+3.  *In plain English, what does an odds of 0.05 mean for a marketer trying to interpret campaign response?*
+
+    My answer: An odds of 0.05 means there are about 5 customers who respond for every 100 customers who do not respond. This indicates that responses are relatively rare.
+
+    **Correct answer from class:** Odds of 0.05 means for every customer who responds, about 20 do not. A marketer might say: *"We expect roughly 1 responder for every 20 non-responders mailed."*
+
+    ::: {.callout-note title="Note"}
+    Odds describe the relationship between responders and non-responders, rather than the chance of responding.
+    :::
+
+## Q7. Converting Between Probability and Odds
+
+1.  *If a customer has a 20% chance of responding, what are their odds?*
+
+    The odds are 0.25, meaning there is 1 response for every 4 non-responses.
+
+    **Correct answer from class:** P = 0.20 → odds = 0.25 *(1 success per 4 failures).*
+
+2.  *If a customer has a 50% chance, what are their odds?*
+
+    The odds are 1, meaning the customer is equally likely to respond or not respond.
+
+    **Correct answer from class:** P = 0.50 → odds = 1.00 *(even odds: 1 success per 1 failure).*
+
+3.  *If a customer has an 80% chance, what are their odds?*
+
+    The odds are 4, meaning there are 4 responses for every 1 non-response.
+
+    **Correct answer from class:** P = 0.80 → odds = 4.00 *(4 successes per 1 failure).*
+
+4.  *What pattern do you notice? What happens to odds as probability approaches 1?*
+
+    As probability increases, the odds also increase. When the probability gets close to 1, the odds become very large.
+
+    **Correct answer from class:** As probability approaches 1, the odds increase without limit (approach infinity). This relationship is nonlinear and asymmetric, which is why using log(odds) makes it easier to model in logistic regression.
+
+```{r}
+prob_to_odds <- function(p) p / (1 - p)
+
+prob_to_odds(0.20)
+prob_to_odds(0.50)
+prob_to_odds(0.80)
+```
+
+::: {.callout-note title="Note"}
+As probability increases, the odds increase even faster. When the probability is close to 1, the odds become very large.
+:::
+
+## Q8. Why Log(Odds)?
+
+1.  *Compute `log(odds)` for probabilities 0.10, 0.50, and 0.90*
+
+```{r}
+probs <- c(0.10, 0.50, 0.90)
+
+odds <- probs / (1 - probs)
+
+log_odds <- log(odds)
+
+tibble(
+  probability = probs,
+  odds = odds,
+  log_odds = log_odds
+)
+```
+
+2.  *Verify that `log(odds)` at* $P=0.50$ *equals exactly 0 — why does this make sense intuitively?*
+
+    When the probability is 0.50, the odds equal 1. Since log(1) = 0, the log(odds) is zero.
+
+    **Correct answer from class:** `log(odds)` at **P = 0.50** is **0** because odds = 1 (equal chance of success and failure), and **log(1) = 0** for any base.
+
+3.  *Are the log(odds) values symmetric around 0? What does this symmetry mean for modeling?*
+
+    Yes. The log(odds) values are symmetric around zero. This makes logistic regression easier because positive and negative relationships are treated equally.
+
+    **Correct answer from class:** Yes, the `log(odds)` values are symmetric: **P = 0.10** gives **−2.197** and **P = 0.90** gives **+2.197** (mirror images). This symmetry means a model can treat "more likely" and "less likely" on equal footing—something that is not possible with raw odds (0.111 vs. 9.000 are not symmetric around any meaningful center).
+
+::: callout-note
+Log(odds) provides a symmetric scale, so increases and decreases in probability are treated more consistently.
+:::
+
+## Q9. The Logit Function
+
+1.  *Using `mail_data`, compute the overall response rate (probability)*
+
+    ```{r}
+    p_respond <- mean(mail_data$responded == "yes")
+    p_respond
+    ```
+
+2.  *Convert it to log(odds) using the formula above*
+
+    ```{r}
+    log(p_respond / (1 - p_respond))
+    ```
+
+3.  *In your Week 2 recipe, the model output `.pred_yes` is a probability. Write the R code to convert it to log(odds).*
+
+    log(preds.pred_yes / (1 - preds.pred_yes))
+
+::: {.callout-note title="Note"}
+Using `log()` converts probabilities to log(odds), while `plogis()` converts them back to probabilities.
+:::
+
+## Q10. Log(Odds) and the Normal Distribution
+
+1.  *Your income variable was log-transformed in the recipe because raw income is right-skewed. The video suggests log(odds) of a binary outcome often follow a normal distribution. Why might this property make logistic regression a natural choice for modeling `responded` (yes/no)?*
+
+    My answer: Log(odds) values are more symmetric and closer to a normal distribution than probabilities. This makes logistic regression a good choice for modeling a yes/no outcome like `responded`.
+
+    **Correct answer from class:** Probabilities are bounded between 0 and 1, which is inconvenient for a linear model (which can predict any value). **Log(odds)** transforms probabilities onto the real line (−∞ to +∞), where the assumption of normality is more plausible. Logistic regression models the **log(odds)** as a linear function of the predictors, so normality of **log(odds)** supports that linear modeling assumption.
+
+2.  *In 2–3 sentences, explain why working in log(odds) space is more mathematically convenient than working in probability space for a linear model.*
+
+    Working with log(odds) makes the relationship between predictors and the outcome more linear. This makes it easier to fit a regression model than using probabilities directly.
+
+    **Correct answer from class:** Working in probability space, the relationship between predictors and the outcome is inherently nonlinear (the S-curve). In **log(odds)** space, the same relationship is linear - which is what the linear predictor β0+β1x1+…\beta_0 + \beta_1x_1 + \ldotsβ0​+β1​x1​+… in logistic regression actually models. Linear models are far simpler to estimate and interpret.
+
+::: {.callout-note title="Note"}
+Working in **log(odds)** space makes it easier to build and interpret a linear model than using probabilities directly.
+:::
+
+# Appendix
+
+GitHub Repo:\
+GitHub Pages:\
